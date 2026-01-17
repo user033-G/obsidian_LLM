@@ -5,7 +5,9 @@ import datetime
 from pathlib import Path
 from dotenv import load_dotenv
 
-load_dotenv()
+# Load .env from script directory
+script_dir = Path(__file__).parent
+load_dotenv(script_dir / ".env")
 
 # Configuration
 VAULT_DIR = os.getenv("VAULT_DIR")
@@ -172,10 +174,16 @@ def weekly_review(iso_week_str):
     prompt = WEEKLY_PROMPT_TEMPLATE.format(weekly_text=weekly_text)
 
     try:
-        response = client.generate_content(
-            model="gemini-2.0-flash",
-            contents=prompt
-        )
+        if USE_MOCK:
+             response = client.generate_content(
+                model="gemini-2.0-flash",
+                contents=prompt
+            )
+        else:
+            response = client.models.generate_content(
+                model="gemini-2.0-flash",
+                contents=prompt
+            )
         ai_response = response.text
 
         # Clean markdown fences

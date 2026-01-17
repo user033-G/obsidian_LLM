@@ -5,7 +5,9 @@ import glob
 from pathlib import Path
 from dotenv import load_dotenv
 
-load_dotenv()
+# Load .env from script directory
+script_dir = Path(__file__).parent
+load_dotenv(script_dir / ".env")
 
 # Configuration
 VAULT_DIR = os.getenv("VAULT_DIR")

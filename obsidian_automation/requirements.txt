@@ -1,0 +1,6 @@
+google-genai
+newspaper3k
+pdf2image
+pytesseract
+python-dotenv
+pyyaml

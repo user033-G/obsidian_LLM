@@ -192,8 +192,8 @@ def process_file(vault_path, source_rel_path):
         "model": MODEL,
         "messages": [
             {"role": "user", "content": prompt}
-        ],
-        "response_format": {"type": "json_object"}
+        ]
+        # "response_format": {"type": "json_object"} # Not supported by free Llama 3.3 providers
     }
 
     response = None

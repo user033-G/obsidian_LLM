@@ -309,20 +309,30 @@ def main():
         files = sorted(input_full_path.glob("*.md"))
         print(f"Found {len(files)} markdown files.")
 
+        tasks = []
         for file_path in files:
             rel_path = file_path.relative_to(vault_path)
 
             # Skip if already processed
-            # Check for exact string match or ensuring string format match
             if str(rel_path) in processed_sources:
                 print(f"Skipping {rel_path} (Already processed)")
                 continue
 
-            # Optional: strict source_type checking to skip readme.md etc?
-            # get_meta_info returns "unknown". Let's process it and let user decide or skip inside?
-            # User wants convenience. Let's process.
+            tasks.append(rel_path)
 
-            process_file(vault_path, rel_path)
+        # Parallel processing
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        print(f"Processing {len(tasks)} files with 5 threads...")
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            future_to_file = {executor.submit(process_file, vault_path, p): p for p in tasks}
+
+            for future in as_completed(future_to_file):
+                file_p = future_to_file[future]
+                try:
+                    future.result()
+                except Exception as exc:
+                    print(f'{file_p} generated an exception: {exc}')
 
     else:
         # Single file mode

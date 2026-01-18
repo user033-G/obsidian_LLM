@@ -218,22 +218,17 @@ def process_file(vault_path, source_rel_path):
 
     # 5. Parse JSON
     try:
-        # Clean up markdown code blocks if present
-        clean_json = ai_content.strip()
-        if clean_json.startswith("```json"):
-            clean_json = clean_json.replace("```json", "", 1)
-        if clean_json.startswith("```"):
-            clean_json = clean_json.replace("```", "", 1)
-        if clean_json.endswith("```"):
-            clean_json = clean_json[:-3]
-
-        clean_json = clean_json.strip()
+        # Attempt to find JSON object using regex
+        match = re.search(r"\{.*\}", ai_content, re.DOTALL)
+        if match:
+            clean_json = match.group(0)
+        else:
+            clean_json = ai_content
 
         parsed_data = json.loads(clean_json)
     except json.JSONDecodeError as e:
         print(f"Error parsing JSON for {source_rel_path}.")
-        # print(f"Raw response: {ai_content}")
-        # print(f"JSON Error: {e}")
+        print(f"Raw response (first 500 chars): {ai_content[:500]}...")
         return False
 
     # Validate topics

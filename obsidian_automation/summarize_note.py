@@ -130,38 +130,49 @@ def get_unique_filepath(directory, filename):
             return new_path
         counter += 1
 
-def main():
-    parser = argparse.ArgumentParser(description="Summarize Obsidian note using LLM.")
-    parser.add_argument("filepath", help="Path to the source note (relative to VAULT_DIR)")
-    args = parser.parse_args()
+def get_processed_sources(fleeting_dir):
+    """
+    10_fleeting フォルダ内のファイルをスキャンし、すでに処理済みの source_path のセットを返す
+    """
+    processed = set()
+    if not fleeting_dir.exists():
+        return processed
 
-    if not VAULT_DIR:
-        print("Error: VAULT_DIR is not set in .env")
-        sys.exit(1)
+    for filepath in fleeting_dir.glob("*.md"):
+        try:
+            with open(filepath, "r", encoding="utf-8") as f:
+                # Read first few lines looking for 'source_path:'
+                for _ in range(10): # Check first 10 lines
+                    line = f.readline()
+                    if not line:
+                        break
+                    match = re.match(r"^source_path:\s*(.+)$", line.strip())
+                    if match:
+                        processed.add(match.group(1).strip())
+                        break
+        except Exception:
+            pass # Skip unreadable files
+    return processed
 
-    if not API_KEY:
-        print("Error: OPENROUTER_API_KEY is not set in .env")
-        sys.exit(1)
-
-    # Resolve paths
-    vault_path = Path(VAULT_DIR)
-    source_rel_path = args.filepath
+def process_file(vault_path, source_rel_path):
+    """
+    Processes a single file. Returns True if successful, False otherwise.
+    """
     source_full_path = vault_path / source_rel_path
-
-    if not source_full_path.exists():
-        print(f"Error: File not found: {source_full_path}")
-        sys.exit(1)
 
     # 2. Estimate meta info
     source_type, date_str = get_meta_info(source_rel_path)
+
+    # Optional: Skip files with unknown source type in batch?
+    # Keeping it as is, but logic inside might produce "unknown" in output.
 
     # 3. Read content
     try:
         with open(source_full_path, "r", encoding="utf-8") as f:
             content = f.read()
     except Exception as e:
-        print(f"Error reading file: {e}")
-        sys.exit(1)
+        print(f"Error reading file {source_rel_path}: {e}")
+        return False
 
     # 4. Call LLM
     prompt = PROMPT_TEMPLATE.format(
@@ -174,7 +185,7 @@ def main():
     headers = {
         "Authorization": f"Bearer {API_KEY}",
         "Content-Type": "application/json",
-        "HTTP-Referer": "https://github.com/obsidian-automation", # Optional: for OpenRouter rankings
+        "HTTP-Referer": "https://github.com/obsidian-automation",
     }
 
     data = {
@@ -195,15 +206,15 @@ def main():
         if "choices" in result and len(result["choices"]) > 0:
             ai_content = result["choices"][0]["message"]["content"]
         else:
-            print("Error: No choices in API response")
-            print(result)
-            sys.exit(1)
+            print(f"Error for {source_rel_path}: No choices in API response")
+            # print(result)
+            return False
 
     except requests.exceptions.RequestException as e:
-        print(f"API Request Error: {e}")
+        print(f"API Request Error for {source_rel_path}: {e}")
         if response is not None:
              print(response.text)
-        sys.exit(1)
+        return False
 
     # 5. Parse JSON
     try:
@@ -211,7 +222,7 @@ def main():
         clean_json = ai_content.strip()
         if clean_json.startswith("```json"):
             clean_json = clean_json.replace("```json", "", 1)
-        if clean_json.startswith("```"): # Sometimes just ```
+        if clean_json.startswith("```"):
             clean_json = clean_json.replace("```", "", 1)
         if clean_json.endswith("```"):
             clean_json = clean_json[:-3]
@@ -220,16 +231,16 @@ def main():
 
         parsed_data = json.loads(clean_json)
     except json.JSONDecodeError as e:
-        print(f"Error: Failed to parse JSON from LLM response.")
-        print(f"Raw response: {ai_content}")
-        print(f"JSON Error: {e}")
-        sys.exit(1)
+        print(f"Error parsing JSON for {source_rel_path}.")
+        # print(f"Raw response: {ai_content}")
+        # print(f"JSON Error: {e}")
+        return False
 
     # Validate topics
     topics = parsed_data.get("topics", [])
     if not topics:
-        print("No topics found. Exiting.")
-        sys.exit(0)
+        print(f"No topics found for {source_rel_path}. Skipping generation.")
+        return True
 
     # 6. Generate Markdown files
     fleeting_dir = vault_path / "10_fleeting"
@@ -252,9 +263,9 @@ def main():
 
         # Markdown Content
         md_content = MARKDOWN_TEMPLATE.format(
-            tags=json.dumps(tags, ensure_ascii=False), # Convert list to valid string rep like ["#a", "#b"]
+            tags=json.dumps(tags, ensure_ascii=False),
             source_type=parsed_data.get("source_type", source_type),
-            source_path=parsed_data.get("source_path", source_rel_path),
+            source_path=parsed_data.get("source_path", str(source_rel_path)),
             date=parsed_data.get("date", date_str),
             index=index,
             title=title,
@@ -269,6 +280,58 @@ def main():
             print(f"Error writing file {output_path}: {e}")
 
     print(f"Created {count} notes for {source_rel_path}")
+    return True
+
+def main():
+    parser = argparse.ArgumentParser(description="Summarize Obsidian note(s) using LLM.")
+    parser.add_argument("filepath", help="Path to the source note or directory (relative to VAULT_DIR)")
+    args = parser.parse_args()
+
+    if not VAULT_DIR:
+        print("Error: VAULT_DIR is not set in .env")
+        sys.exit(1)
+
+    if not API_KEY:
+        print("Error: OPENROUTER_API_KEY is not set in .env")
+        sys.exit(1)
+
+    # Resolve paths
+    vault_path = Path(VAULT_DIR)
+    input_rel_path = Path(args.filepath)
+    input_full_path = vault_path / input_rel_path
+
+    if not input_full_path.exists():
+        print(f"Error: Path not found: {input_full_path}")
+        sys.exit(1)
+
+    fleeting_dir = vault_path / "10_fleeting"
+
+    if input_full_path.is_dir():
+        # Directory mode
+        print(f"Processing directory: {input_rel_path}")
+        processed_sources = get_processed_sources(fleeting_dir)
+
+        files = sorted(input_full_path.glob("*.md"))
+        print(f"Found {len(files)} markdown files.")
+
+        for file_path in files:
+            rel_path = file_path.relative_to(vault_path)
+
+            # Skip if already processed
+            # Check for exact string match or ensuring string format match
+            if str(rel_path) in processed_sources:
+                print(f"Skipping {rel_path} (Already processed)")
+                continue
+
+            # Optional: strict source_type checking to skip readme.md etc?
+            # get_meta_info returns "unknown". Let's process it and let user decide or skip inside?
+            # User wants convenience. Let's process.
+
+            process_file(vault_path, rel_path)
+
+    else:
+        # Single file mode
+        process_file(vault_path, input_rel_path)
 
 if __name__ == "__main__":
     main()
